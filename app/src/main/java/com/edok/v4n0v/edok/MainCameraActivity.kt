@@ -85,7 +85,7 @@ class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
         val cameraManager: CameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             val characteristicts = cameraManager.getCameraCharacteristics(cameraDevice?.id!!)
-            var jpegSizes: Array<Size>? = null
+            var jpegSizes: Array<Size>?
 
             jpegSizes = characteristicts[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]?.getOutputSizes(ImageFormat.JPEG)
 
