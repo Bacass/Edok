@@ -1,7 +1,10 @@
 package com.edok.v4n0v.edok
 
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
@@ -14,6 +17,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.support.v4.app.ActivityCompat
 import android.util.Size
 import android.util.SparseIntArray
 import android.view.Surface
@@ -24,10 +28,12 @@ import java.io.FileOutputStream
 import java.util.*
 
 
-class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
+class MainCameraActivity : BaseActivity() {
     companion object {
         val ORIENTATIONS = SparseIntArray()
-        val REQUEST_CAMERA_PERMITION = 200
+        const val REQUEST_CAMERA_PERMISSION = 200
+        const val THREAD_NAME = "Camera Background"
+        val PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE)
     }
 
     init {
@@ -46,37 +52,95 @@ class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
 
     private lateinit var file: File
     private var isFlashSupported = false
-    private lateinit var mBackgroundHandler: Handler
-    private lateinit var mBackgrounfThread: HandlerThread
+    private var mBackgroundHandler: Handler? = null
+    private var mBackgroundThread: HandlerThread? = null
+
+    private val textureListener = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture?, width: Int, height: Int) {
+            makeLog("onSurfaceTextureSizeChanged")
+        }
+
+        override fun onSurfaceTextureUpdated(surface: SurfaceTexture?) {
+            makeLog("onSurfaceTextureUpdated")
+        }
+
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture?): Boolean {
+            return false
+        }
+
+        override fun onSurfaceTextureAvailable(surface: SurfaceTexture?, width: Int, height: Int) {
+            makeLog("onSurfaceTextureAvailable")
+            openCamera()
+        }
+
+    }
+
+    private val stateCallback = object : CameraDevice.StateCallback() {
+        override fun onOpened(camera: CameraDevice) {
+            cameraDevice = camera
+            createCameraPreview()
+        }
+
+        override fun onDisconnected(camera: CameraDevice) {
+            cameraDevice?.close()
+        }
+
+        override fun onError(camera: CameraDevice, error: Int) {
+            cameraDevice?.close()
+            cameraDevice = null
+        }
+
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        when (requestCode) {
+            REQUEST_CAMERA_PERMISSION -> if (grantResults[0] != PERMISSION_GRANTED) {
+                toast(resources.getString(R.string.camera_permission_err))
+                makeLog(Exception("REQUEST_CAMERA_PERMISSION failed"))
+                finish()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startBackgroundThread()
+        if (photoTextureView.isAvailable)
+            openCamera()
+        else
+            photoTextureView.surfaceTextureListener = textureListener
+
+    }
+
+    private fun startBackgroundThread() {
+        mBackgroundThread = HandlerThread(THREAD_NAME)
+        mBackgroundThread?.start()
+        mBackgroundHandler = Handler(mBackgroundThread?.looper)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main_camera)
-        photoView.surfaceTextureListener = this
+        photoTextureView.surfaceTextureListener = textureListener
         btnShot.setOnClickListener {
             takePicture()
         }
     }
 
-
-    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture?, width: Int, height: Int) {
-        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+    override fun onPause() {
+        stopBackgroundThread()
+        super.onPause()
     }
 
-    override fun onSurfaceTextureUpdated(surface: SurfaceTexture?) {
-        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
-    }
-
-    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture?): Boolean {
-        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
-    }
-
-    override fun onSurfaceTextureAvailable(surface: SurfaceTexture?, width: Int, height: Int) {
-        openCamera()
-    }
-
-    private fun openCamera() {
-
+    private fun stopBackgroundThread() {
+        mBackgroundThread?.quitSafely()
+        try {
+            mBackgroundThread?.join()
+            mBackgroundThread = null
+            mBackgroundHandler = null
+        } catch (e: InterruptedException) {
+            makeLog(e)
+        }
     }
 
     private fun takePicture() {
@@ -99,7 +163,7 @@ class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
             val reader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 1)
             val outSurfaces = mutableListOf<Surface>()
             outSurfaces.add(reader.surface)
-            outSurfaces.add(Surface(photoView.surfaceTexture))
+            outSurfaces.add(Surface(photoTextureView.surfaceTexture))
 
             val captBuilder: CaptureRequest.Builder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)!!
             captBuilder.addTarget(reader.surface)
@@ -120,7 +184,7 @@ class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
                     buffer.get(bytes)
                     save(bytes)
                 } catch (e: Exception) {
-                    saveLog(e)
+                    makeLog(e)
                 } finally {
                     image?.close()
                 }
@@ -134,23 +198,23 @@ class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
                 }
             }
 
-            cameraDevice?.createCaptureSession(outSurfaces, object : CameraCaptureSession.StateCallback(){
+            cameraDevice?.createCaptureSession(outSurfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
-                    try{
+                    try {
                         cameraCaptureSession.capture(captBuilder.build(), capListener, mBackgroundHandler)
-                    } catch (e:CameraAccessException){
-                        saveLog(e)
+                    } catch (e: CameraAccessException) {
+                        makeLog(e)
                     }
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
-                    saveLog(Exception("cameraDevice.createCaptureSession onConfigureFailed"))
+                    makeLog(Exception("cameraDevice.createCaptureSession onConfigureFailed"))
                 }
 
             }, mBackgroundHandler)
 
         } catch (e: CameraAccessException) {
-            saveLog(e)
+            makeLog(e)
         }
     }
 
@@ -162,7 +226,61 @@ class MainCameraActivity : BaseActivity(), TextureView.SurfaceTextureListener {
 
 
     private fun createCameraPreview() {
+        try {
+            val texture = photoTextureView.surfaceTexture
+            texture?.setDefaultBufferSize(imgDimen.width, imgDimen.height)
+            val surface = Surface(texture)
+            captureRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)!!
+            captureRequestBuilder.addTarget(surface)
+            cameraDevice?.createCaptureSession(Arrays.asList(surface), object : CameraCaptureSession.StateCallback() {
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    makeLog("createCameraPreview, onConfigureFailed")
+                }
 
+                override fun onConfigured(session: CameraCaptureSession) {
+                    if (cameraDevice == null)
+                        return
+
+                    cameraCaptureSession = session
+                    updatePreview()
+                }
+
+            }, mBackgroundHandler)
+        } catch (e: CameraAccessException) {
+            makeLog(e)
+        }
     }
 
+    private fun updatePreview() {
+        if (cameraDevice == null)
+            makeLog(Exception("update preview failed, cameraDevice is null "))
+        captureRequestBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
+        try {
+            cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mBackgroundHandler)
+        } catch (e: CameraAccessException) {
+            makeLog(e)
+        }
+    }
+
+    private fun openCamera() {
+        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+//        if (cameraDevice != null)
+            try {
+                cameraId = manager.cameraIdList[0]
+
+                val characteristics = manager.getCameraCharacteristics(cameraId)
+                val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                imgDimen = map.getOutputSizes(SurfaceTexture::class.java)[0]
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_CAMERA_PERMISSION)
+                    return
+                }
+                manager.openCamera(cameraId, stateCallback, null)
+//            val jpegSizes = mutableListOf<Size>()
+//            characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getInputSizes(ImageFormat.JPEG)
+            } catch (e: CameraAccessException) {
+                makeLog(e)
+            }
+
+    }
 }

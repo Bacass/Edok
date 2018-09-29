@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Edok</string>
+    <string name="camera_permission_err">You can\'t use camera without permission</string>
+
 </resources>

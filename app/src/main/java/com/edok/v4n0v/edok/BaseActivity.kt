@@ -8,10 +8,10 @@ import android.widget.Toast
 open class BaseActivity:AppCompatActivity(){
 
 
-    fun saveLog(msg:String){
+    fun makeLog(msg:String){
         Log.d(this.javaClass.simpleName, msg)
     }
-    fun saveLog(exception:Exception){
+    fun makeLog(exception:Exception){
         Log.e(this.javaClass.simpleName, exception.message.toString())
     }
 //    fun info(msg:String){
