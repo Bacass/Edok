@@ -5,13 +5,10 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.PERMISSION_GRANTED
-import android.graphics.ImageFormat
-import android.graphics.SurfaceTexture
+import android.graphics.*
 import android.hardware.camera2.*
 import android.hardware.camera2.CameraMetadata.CONTROL_MODE_AUTO
 import android.hardware.camera2.CaptureRequest.CONTROL_MODE
-import android.hardware.camera2.CaptureRequest.JPEG_ORIENTATION
-import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.Image
 import android.media.ImageReader
 import android.os.Bundle
@@ -23,10 +20,13 @@ import android.util.Size
 import android.util.SparseIntArray
 import android.view.Surface
 import android.view.TextureView
-import android.widget.Toast
+import android.view.View
 import kotlinx.android.synthetic.main.activity_main_camera.*
 import java.io.*
 import java.util.*
+import android.graphics.Bitmap
+
+
 
 
 class MainCameraActivity : BaseActivity() {
@@ -50,6 +50,8 @@ class MainCameraActivity : BaseActivity() {
     private lateinit var captureRequestBuilder: CaptureRequest.Builder
     private lateinit var imgDimen: Size
     private lateinit var imgReader: ImageReader
+
+    private val photoList = arrayListOf<Bitmap>()
 
     private lateinit var file: File
     private var isFlashSupported = false
@@ -159,7 +161,7 @@ class MainCameraActivity : BaseActivity() {
             //Capture image with custom size
             var width = 640
             var height = 480
-            if (jpegSizes != null && jpegSizes.size > 0) {
+            if (jpegSizes != null && jpegSizes.isNotEmpty()) {
                 width = jpegSizes[0].width
                 height = jpegSizes[0].height
             }
@@ -182,10 +184,15 @@ class MainCameraActivity : BaseActivity() {
                     var image: Image? = null
                     try {
                         image = reader.acquireLatestImage()
+
+
                         val buffer = image!!.planes[0].buffer
                         val bytes = ByteArray(buffer.capacity())
                         buffer.get(bytes)
-                        save(bytes)
+
+                        photoList.add(formatBitmapForPreview(bytes))
+                        bytes.save()
+                        updateView()
 
                     } catch (e: FileNotFoundException) {
                         e.printStackTrace()
@@ -196,23 +203,14 @@ class MainCameraActivity : BaseActivity() {
                     }
                 }
 
-                @Throws(IOException::class)
-                private fun save(bytes: ByteArray) {
-                    var outputStream: OutputStream? = null
-                    try {
-                        outputStream = FileOutputStream(file)
-                        outputStream.write(bytes)
-                    } finally {
-                        outputStream?.close()
-                    }
-                }
+
             }
 
             reader.setOnImageAvailableListener(readerListener, mBackgroundHandler)
             val captureListener = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     super.onCaptureCompleted(session, request, result)
-                    toast( "Saved $file")
+                    toast("Saved $file")
                     createCameraPreview()
                 }
             }
@@ -239,144 +237,104 @@ class MainCameraActivity : BaseActivity() {
 
     }
 
-//    private fun takePicture() {
-//        if (cameraDevice == null)
-//            return
-//        val cameraManager: CameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-//        try {
-//            val characteristicts = cameraManager.getCameraCharacteristics(cameraDevice?.id!!)
-//            var jpegSizes: Array<Size>?
-//
-//            jpegSizes = characteristicts[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]?.getOutputSizes(ImageFormat.JPEG)
-//
-//            var width = 640
-//            var height = 480
-//            if (jpegSizes != null && jpegSizes.isNotEmpty()) {
-//                width = jpegSizes[0].width
-//                height = jpegSizes[0].height
-//            }
-//
-//            val reader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 1)
-//            val outSurfaces = mutableListOf<Surface>()
-//            outSurfaces.add(reader.surface)
-//            outSurfaces.add(Surface(photoTextureView.surfaceTexture))
-//
-//            val captBuilder: CaptureRequest.Builder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)!!
-//            captBuilder.addTarget(reader.surface)
-//            captBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
-//
-//            //Orientation
-//            val rotation = windowManager.defaultDisplay.rotation
-//            captBuilder.set(JPEG_ORIENTATION, ORIENTATIONS[rotation])
-//
-//            file = File("${Environment.getExternalStorageDirectory()}/${UUID.randomUUID()}.jpg")
-//
-//            val readerListener = ImageReader.OnImageAvailableListener {
-//                var image: Image? = null
-//                try {
-//                    image = reader.acquireLatestImage()
-//                    val buffer = image.planes[0].buffer
-//                    var bytes = ByteArray(buffer.capacity())
-//                    buffer.get(bytes)
-//                    save(bytes)
-//                } catch (e: Exception) {
-//                    makeLog(e)
-//                } finally {
-//                    image?.close()
-//                }
-//            }
-//            reader.setOnImageAvailableListener(readerListener, mBackgroundHandler)
-//            var capListener: CameraCaptureSession.CaptureCallback = object : CameraCaptureSession.CaptureCallback() {
-//                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-//                    super.onCaptureCompleted(session, request, result)
-//                    runOnUiThread { toast("Saved in $file") }
-//                    createCameraPreview()
-//                }
-//            }
-//
-//            cameraDevice?.createCaptureSession(outSurfaces, object : CameraCaptureSession.StateCallback() {
-//                override fun onConfigured(session: CameraCaptureSession) {
-//                    try {
-//                        cameraCaptureSession.capture(captBuilder.build(), capListener, mBackgroundHandler)
-//                    } catch (e: CameraAccessException) {
-//                        makeLog(e)
-//                    }
-//                }
-//
-//                override fun onConfigureFailed(session: CameraCaptureSession) {
-//                    makeLog(Exception("cameraDevice.createCaptureSession onConfigureFailed"))
-//                }
-//
-//            }, mBackgroundHandler)
-//
-//        } catch (e: CameraAccessException) {
-//            makeLog(e)
-//        }
-//    }
+    private fun formatBitmapForPreview(bytes: ByteArray):Bitmap {
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, null)
+        if (bitmap.width >bitmap.height){
+            val matrix = Matrix()
 
-    private fun save(bytes: ByteArray) {
-        FileOutputStream(file).use {
-            it.write(bytes)
+            matrix.postRotate(90F)
+
+            val rotated =  Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            makeLog("Width is ${rotated.width}")
+            return Bitmap.createBitmap( rotated,
+                    0,
+                    (rotated.height*0.8).toInt(),
+                    rotated.width,
+                    (rotated.height*0.2).toInt())
         }
+
+        return bitmap
+
+
+
+
+}
+
+private fun updateView() {
+    runOnUiThread {
+        if (photoList.size > 0) {
+
+            if (imgLastPhoto.visibility == View.GONE)
+                imgLastPhoto.visibility = View.VISIBLE
+            imgLastPhoto.setImageBitmap(photoList[photoList.size - 1])
+        }
+        //   imgLastPhoto.setImageDrawable(photoList[photoList.size])
     }
 
+}
 
-    private fun createCameraPreview() {
-        try {
-            val texture = photoTextureView.surfaceTexture
-            texture?.setDefaultBufferSize(imgDimen.width, imgDimen.height)
-            val surface = Surface(texture)
-            captureRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)!!
-            captureRequestBuilder.addTarget(surface)
-            cameraDevice?.createCaptureSession(Arrays.asList(surface), object : CameraCaptureSession.StateCallback() {
-                override fun onConfigureFailed(session: CameraCaptureSession) {
-                    makeLog("createCameraPreview, onConfigureFailed")
-                }
 
-                override fun onConfigured(session: CameraCaptureSession) {
-                    if (cameraDevice == null)
-                        return
-
-                    cameraCaptureSession = session
-                    updatePreview()
-                }
-
-            }, mBackgroundHandler)
-        } catch (e: CameraAccessException) {
-            makeLog(e)
-        }
+private fun ByteArray.save() {
+    FileOutputStream(file).use {
+        it.write(this)
     }
+}
 
-    private fun updatePreview() {
-        if (cameraDevice == null)
-            makeLog(Exception("update preview failed, cameraDevice is null "))
-        captureRequestBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
-        try {
-            cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mBackgroundHandler)
-        } catch (e: CameraAccessException) {
-            makeLog(e)
-        }
-    }
 
-    private fun openCamera() {
-        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-//        if (cameraDevice != null)
-            try {
-                cameraId = manager.cameraIdList[0]
-
-                val characteristics = manager.getCameraCharacteristics(cameraId)
-                val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                imgDimen = map.getOutputSizes(SurfaceTexture::class.java)[0]
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                    ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_CAMERA_PERMISSION)
-                    return
-                }
-                manager.openCamera(cameraId, stateCallback, null)
-//            val jpegSizes = mutableListOf<Size>()
-//            characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getInputSizes(ImageFormat.JPEG)
-            } catch (e: CameraAccessException) {
-                makeLog(e)
+private fun createCameraPreview() {
+    try {
+        val texture = photoTextureView.surfaceTexture
+        texture?.setDefaultBufferSize(imgDimen.width, imgDimen.height)
+        val surface = Surface(texture)
+        captureRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)!!
+        captureRequestBuilder.addTarget(surface)
+        cameraDevice?.createCaptureSession(Arrays.asList(surface), object : CameraCaptureSession.StateCallback() {
+            override fun onConfigureFailed(session: CameraCaptureSession) {
+                makeLog("createCameraPreview, onConfigureFailed")
             }
 
+            override fun onConfigured(session: CameraCaptureSession) {
+                if (cameraDevice == null)
+                    return
+
+                cameraCaptureSession = session
+                updatePreview()
+            }
+
+        }, mBackgroundHandler)
+    } catch (e: CameraAccessException) {
+        makeLog(e)
     }
+}
+
+private fun updatePreview() {
+    if (cameraDevice == null)
+        makeLog(Exception("update preview failed, cameraDevice is null "))
+    captureRequestBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
+    try {
+        cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mBackgroundHandler)
+    } catch (e: CameraAccessException) {
+        makeLog(e)
+    }
+}
+
+private fun openCamera() {
+    val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+//        if (cameraDevice != null)
+    try {
+        cameraId = manager.cameraIdList[0]
+
+        val characteristics = manager.getCameraCharacteristics(cameraId)
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        imgDimen = map.getOutputSizes(SurfaceTexture::class.java)[0]
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_CAMERA_PERMISSION)
+            return
+        }
+        manager.openCamera(cameraId, stateCallback, null)
+    } catch (e: CameraAccessException) {
+        makeLog(e)
+    }
+
+}
 }
