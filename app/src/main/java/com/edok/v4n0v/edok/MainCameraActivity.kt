@@ -11,6 +11,7 @@ import android.hardware.camera2.*
 import android.hardware.camera2.CameraMetadata.CONTROL_MODE_AUTO
 import android.hardware.camera2.CaptureRequest.CONTROL_MODE
 import android.hardware.camera2.CaptureRequest.JPEG_ORIENTATION
+import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.Image
 import android.media.ImageReader
 import android.os.Bundle
@@ -22,9 +23,9 @@ import android.util.Size
 import android.util.SparseIntArray
 import android.view.Surface
 import android.view.TextureView
+import android.widget.Toast
 import kotlinx.android.synthetic.main.activity_main_camera.*
-import java.io.File
-import java.io.FileOutputStream
+import java.io.*
 import java.util.*
 
 
@@ -143,80 +144,175 @@ class MainCameraActivity : BaseActivity() {
         }
     }
 
+
     private fun takePicture() {
         if (cameraDevice == null)
             return
-        val cameraManager: CameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
-            val characteristicts = cameraManager.getCameraCharacteristics(cameraDevice?.id!!)
-            var jpegSizes: Array<Size>?
+            val characteristics = manager.getCameraCharacteristics(cameraDevice?.id)
+            var jpegSizes: Array<Size>? = null
+            if (characteristics != null)
+                jpegSizes = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+                        .getOutputSizes(ImageFormat.JPEG)
 
-            jpegSizes = characteristicts[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]?.getOutputSizes(ImageFormat.JPEG)
-
+            //Capture image with custom size
             var width = 640
             var height = 480
-            if (jpegSizes != null && jpegSizes.isNotEmpty()) {
+            if (jpegSizes != null && jpegSizes.size > 0) {
                 width = jpegSizes[0].width
                 height = jpegSizes[0].height
             }
-
             val reader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 1)
-            val outSurfaces = mutableListOf<Surface>()
-            outSurfaces.add(reader.surface)
-            outSurfaces.add(Surface(photoTextureView.surfaceTexture))
+            val outputSurface = ArrayList<Surface>(2)
+            outputSurface.add(reader.surface)
+            outputSurface.add(Surface(photoTextureView.surfaceTexture))
 
-            val captBuilder: CaptureRequest.Builder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)!!
-            captBuilder.addTarget(reader.surface)
-            captBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
+            val captureBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+            captureBuilder?.addTarget(reader.surface)
+            captureBuilder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
 
-            //Orientation
+            //Check orientation base on device
             val rotation = windowManager.defaultDisplay.rotation
-            captBuilder.set(JPEG_ORIENTATION, ORIENTATIONS[rotation])
+            captureBuilder?.set(CaptureRequest.JPEG_ORIENTATION, ORIENTATIONS.get(rotation))
 
-            file = File("${Environment.getExternalStorageDirectory()}/${UUID.randomUUID()}.jpg")
+            file = File(Environment.getExternalStorageDirectory().toString() + "/" + UUID.randomUUID().toString() + ".jpg")
+            val readerListener = object : ImageReader.OnImageAvailableListener {
+                override fun onImageAvailable(imageReader: ImageReader) {
+                    var image: Image? = null
+                    try {
+                        image = reader.acquireLatestImage()
+                        val buffer = image!!.planes[0].buffer
+                        val bytes = ByteArray(buffer.capacity())
+                        buffer.get(bytes)
+                        save(bytes)
 
-            val readerListener = ImageReader.OnImageAvailableListener {
-                var image: Image? = null
-                try {
-                    image = reader.acquireLatestImage()
-                    val buffer = image.planes[0].buffer
-                    var bytes = ByteArray(buffer.capacity())
-                    buffer.get(bytes)
-                    save(bytes)
-                } catch (e: Exception) {
-                    makeLog(e)
-                } finally {
-                    image?.close()
+                    } catch (e: FileNotFoundException) {
+                        e.printStackTrace()
+                    } catch (e: IOException) {
+                        e.printStackTrace()
+                    } finally {
+                        run { image?.close() }
+                    }
+                }
+
+                @Throws(IOException::class)
+                private fun save(bytes: ByteArray) {
+                    var outputStream: OutputStream? = null
+                    try {
+                        outputStream = FileOutputStream(file)
+                        outputStream.write(bytes)
+                    } finally {
+                        outputStream?.close()
+                    }
                 }
             }
+
             reader.setOnImageAvailableListener(readerListener, mBackgroundHandler)
-            var capListener: CameraCaptureSession.CaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+            val captureListener = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     super.onCaptureCompleted(session, request, result)
-                    runOnUiThread { toast("Saved in $file") }
+                    toast( "Saved $file")
                     createCameraPreview()
                 }
             }
 
-            cameraDevice?.createCaptureSession(outSurfaces, object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) {
+            cameraDevice?.createCaptureSession(outputSurface, object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
                     try {
-                        cameraCaptureSession.capture(captBuilder.build(), capListener, mBackgroundHandler)
+                        cameraCaptureSession.capture(captureBuilder?.build(), captureListener, mBackgroundHandler)
                     } catch (e: CameraAccessException) {
-                        makeLog(e)
+                        e.printStackTrace()
                     }
+
                 }
 
-                override fun onConfigureFailed(session: CameraCaptureSession) {
-                    makeLog(Exception("cameraDevice.createCaptureSession onConfigureFailed"))
-                }
+                override fun onConfigureFailed(cameraCaptureSession: CameraCaptureSession) {
 
+                }
             }, mBackgroundHandler)
 
+
         } catch (e: CameraAccessException) {
-            makeLog(e)
+            e.printStackTrace()
         }
+
     }
+
+//    private fun takePicture() {
+//        if (cameraDevice == null)
+//            return
+//        val cameraManager: CameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+//        try {
+//            val characteristicts = cameraManager.getCameraCharacteristics(cameraDevice?.id!!)
+//            var jpegSizes: Array<Size>?
+//
+//            jpegSizes = characteristicts[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]?.getOutputSizes(ImageFormat.JPEG)
+//
+//            var width = 640
+//            var height = 480
+//            if (jpegSizes != null && jpegSizes.isNotEmpty()) {
+//                width = jpegSizes[0].width
+//                height = jpegSizes[0].height
+//            }
+//
+//            val reader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 1)
+//            val outSurfaces = mutableListOf<Surface>()
+//            outSurfaces.add(reader.surface)
+//            outSurfaces.add(Surface(photoTextureView.surfaceTexture))
+//
+//            val captBuilder: CaptureRequest.Builder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)!!
+//            captBuilder.addTarget(reader.surface)
+//            captBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
+//
+//            //Orientation
+//            val rotation = windowManager.defaultDisplay.rotation
+//            captBuilder.set(JPEG_ORIENTATION, ORIENTATIONS[rotation])
+//
+//            file = File("${Environment.getExternalStorageDirectory()}/${UUID.randomUUID()}.jpg")
+//
+//            val readerListener = ImageReader.OnImageAvailableListener {
+//                var image: Image? = null
+//                try {
+//                    image = reader.acquireLatestImage()
+//                    val buffer = image.planes[0].buffer
+//                    var bytes = ByteArray(buffer.capacity())
+//                    buffer.get(bytes)
+//                    save(bytes)
+//                } catch (e: Exception) {
+//                    makeLog(e)
+//                } finally {
+//                    image?.close()
+//                }
+//            }
+//            reader.setOnImageAvailableListener(readerListener, mBackgroundHandler)
+//            var capListener: CameraCaptureSession.CaptureCallback = object : CameraCaptureSession.CaptureCallback() {
+//                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+//                    super.onCaptureCompleted(session, request, result)
+//                    runOnUiThread { toast("Saved in $file") }
+//                    createCameraPreview()
+//                }
+//            }
+//
+//            cameraDevice?.createCaptureSession(outSurfaces, object : CameraCaptureSession.StateCallback() {
+//                override fun onConfigured(session: CameraCaptureSession) {
+//                    try {
+//                        cameraCaptureSession.capture(captBuilder.build(), capListener, mBackgroundHandler)
+//                    } catch (e: CameraAccessException) {
+//                        makeLog(e)
+//                    }
+//                }
+//
+//                override fun onConfigureFailed(session: CameraCaptureSession) {
+//                    makeLog(Exception("cameraDevice.createCaptureSession onConfigureFailed"))
+//                }
+//
+//            }, mBackgroundHandler)
+//
+//        } catch (e: CameraAccessException) {
+//            makeLog(e)
+//        }
+//    }
 
     private fun save(bytes: ByteArray) {
         FileOutputStream(file).use {
