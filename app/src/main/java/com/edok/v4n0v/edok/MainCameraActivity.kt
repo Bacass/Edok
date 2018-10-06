@@ -241,11 +241,10 @@ class MainCameraActivity : BaseActivity() {
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, null)
         if (bitmap.width >bitmap.height){
             val matrix = Matrix()
-
             matrix.postRotate(90F)
-
-            val rotated =  Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
             makeLog("Width is ${rotated.width}")
+
             return Bitmap.createBitmap( rotated,
                     0,
                     (rotated.height*0.8).toInt(),
