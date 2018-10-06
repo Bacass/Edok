@@ -16,17 +16,16 @@ import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.support.v4.app.ActivityCompat
+import android.util.DisplayMetrics
 import android.util.Size
 import android.util.SparseIntArray
-import android.view.Surface
-import android.view.TextureView
-import android.view.View
+import android.view.*
 import kotlinx.android.synthetic.main.activity_main_camera.*
-import java.io.*
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.FileOutputStream
+import java.io.IOException
 import java.util.*
-import android.graphics.Bitmap
-
-
 
 
 class MainCameraActivity : BaseActivity() {
@@ -105,6 +104,22 @@ class MainCameraActivity : BaseActivity() {
         }
     }
 
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        menuInflater.inflate(R.menu.photo_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem?): Boolean {
+        when(item?.itemId){
+            R.id.action_photo_done -> {
+                toast("Done")
+            }
+        }
+        return true
+    }
+
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
@@ -135,6 +150,12 @@ class MainCameraActivity : BaseActivity() {
         super.onPause()
     }
 
+    private fun getPoint(display: Display): Point {
+        val point = Point()
+        display.getSize(point)
+        return point
+    }
+
     private fun stopBackgroundThread() {
         mBackgroundThread?.quitSafely()
         try {
@@ -159,9 +180,13 @@ class MainCameraActivity : BaseActivity() {
                         .getOutputSizes(ImageFormat.JPEG)
 
             //Capture image with custom size
-            var width = 640
-            var height = 480
-            if (jpegSizes != null && jpegSizes.isNotEmpty()) {
+            val display = windowManager.defaultDisplay
+            val metricsB = DisplayMetrics()
+            display.getMetrics(metricsB)
+            val size= getPoint(display)
+            var width = size.x
+            var height = size.y
+            if (jpegSizes != null && jpegSizes.isNotEmpty() && jpegSizes[0].width > width && jpegSizes[0].height > height) {
                 width = jpegSizes[0].width
                 height = jpegSizes[0].height
             }
@@ -237,103 +262,102 @@ class MainCameraActivity : BaseActivity() {
 
     }
 
-    private fun formatBitmapForPreview(bytes: ByteArray):Bitmap {
+    private fun formatBitmapForPreview(bytes: ByteArray): Bitmap {
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, null)
-        if (bitmap.width >bitmap.height){
+        if (bitmap.width > bitmap.height) {
             val matrix = Matrix()
+            val hintHeight = resources.getDimension(R.dimen.photo_hint_height)
             matrix.postRotate(90F)
             val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
             makeLog("Width is ${rotated.width}")
 
-            return Bitmap.createBitmap( rotated,
+            return Bitmap.createBitmap(rotated,
                     0,
-                    (rotated.height*0.8).toInt(),
+                    (rotated.height * 0.8).toInt(),
                     rotated.width,
-                    (rotated.height*0.2).toInt())
+                    (rotated.height * 0.2).toInt())
         }
 
         return bitmap
 
 
+    }
 
+    private fun updateView() {
+        runOnUiThread {
+            if (photoList.size > 0) {
 
-}
-
-private fun updateView() {
-    runOnUiThread {
-        if (photoList.size > 0) {
-
-            if (imgLastPhoto.visibility == View.GONE)
-                imgLastPhoto.visibility = View.VISIBLE
-            imgLastPhoto.setImageBitmap(photoList[photoList.size - 1])
+                if (imgLastPhoto.visibility == View.GONE)
+                    imgLastPhoto.visibility = View.VISIBLE
+                imgLastPhoto.setImageBitmap(photoList[photoList.size - 1])
+            }
+            //   imgLastPhoto.setImageDrawable(photoList[photoList.size])
         }
-        //   imgLastPhoto.setImageDrawable(photoList[photoList.size])
+
     }
 
-}
 
-
-private fun ByteArray.save() {
-    FileOutputStream(file).use {
-        it.write(this)
+    private fun ByteArray.save() {
+        FileOutputStream(file).use {
+            it.write(this)
+        }
     }
-}
 
 
-private fun createCameraPreview() {
-    try {
-        val texture = photoTextureView.surfaceTexture
-        texture?.setDefaultBufferSize(imgDimen.width, imgDimen.height)
-        val surface = Surface(texture)
-        captureRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)!!
-        captureRequestBuilder.addTarget(surface)
-        cameraDevice?.createCaptureSession(Arrays.asList(surface), object : CameraCaptureSession.StateCallback() {
-            override fun onConfigureFailed(session: CameraCaptureSession) {
-                makeLog("createCameraPreview, onConfigureFailed")
-            }
+    private fun createCameraPreview() {
+        try {
+            val texture = photoTextureView.surfaceTexture
+            texture?.setDefaultBufferSize(imgDimen.width, imgDimen.height)
+            val surface = Surface(texture)
+            captureRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)!!
+            captureRequestBuilder.addTarget(surface)
+            cameraDevice?.createCaptureSession(Arrays.asList(surface), object : CameraCaptureSession.StateCallback() {
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    makeLog("createCameraPreview, onConfigureFailed")
+                }
 
-            override fun onConfigured(session: CameraCaptureSession) {
-                if (cameraDevice == null)
-                    return
+                override fun onConfigured(session: CameraCaptureSession) {
+                    if (cameraDevice == null)
+                        return
 
-                cameraCaptureSession = session
-                updatePreview()
-            }
+                    cameraCaptureSession = session
+                    updatePreview()
+                }
 
-        }, mBackgroundHandler)
-    } catch (e: CameraAccessException) {
-        makeLog(e)
+            }, mBackgroundHandler)
+        } catch (e: CameraAccessException) {
+            makeLog(e)
+        }
     }
-}
 
-private fun updatePreview() {
-    if (cameraDevice == null)
-        makeLog(Exception("update preview failed, cameraDevice is null "))
-    captureRequestBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
-    try {
-        cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mBackgroundHandler)
-    } catch (e: CameraAccessException) {
-        makeLog(e)
+    private fun updatePreview() {
+        if (cameraDevice == null)
+            makeLog(Exception("update preview failed, cameraDevice is null "))
+        captureRequestBuilder.set(CONTROL_MODE, CONTROL_MODE_AUTO)
+        try {
+            cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, mBackgroundHandler)
+        } catch (e: CameraAccessException) {
+            makeLog(e)
+        }
     }
-}
 
-private fun openCamera() {
-    val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    private fun openCamera() {
+        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
 //        if (cameraDevice != null)
-    try {
-        cameraId = manager.cameraIdList[0]
+        try {
+            cameraId = manager.cameraIdList[0]
 
-        val characteristics = manager.getCameraCharacteristics(cameraId)
-        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        imgDimen = map.getOutputSizes(SurfaceTexture::class.java)[0]
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_CAMERA_PERMISSION)
-            return
+            val characteristics = manager.getCameraCharacteristics(cameraId)
+            val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            imgDimen = map.getOutputSizes(SurfaceTexture::class.java)[0]
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_CAMERA_PERMISSION)
+                return
+            }
+            manager.openCamera(cameraId, stateCallback, null)
+        } catch (e: CameraAccessException) {
+            makeLog(e)
         }
-        manager.openCamera(cameraId, stateCallback, null)
-    } catch (e: CameraAccessException) {
-        makeLog(e)
-    }
 
-}
+    }
 }
